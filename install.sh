@@ -152,7 +152,6 @@ apk add --no-cache \
     findutils \
     grep \
     sed \
-    awk \
     tar \
     gzip \
     unzip \
