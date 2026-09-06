@@ -127,12 +127,23 @@ fc-cache -f >/dev/null 2>&1 || true
 # ---------------------------------------------------------------------------
 # Verify Chromium and chromedriver
 # ---------------------------------------------------------------------------
-if [ -x /usr/bin/chromium-browser ]; then
-    CHROME_PATH="/usr/bin/chromium-browser"
-elif [ -x /usr/bin/chromium ]; then
+# Alpine 3.22 normally provides /usr/bin/chromium.
+# Keep chromium-browser as a compatibility fallback.
+
+if [ -x /usr/bin/chromium ]; then
     CHROME_PATH="/usr/bin/chromium"
+elif [ -x /usr/bin/chromium-browser ]; then
+    CHROME_PATH="/usr/bin/chromium-browser"
 else
-    die "Chromium binary was not installed."
+    die "Chromium binary was not installed.
+
+Checked:
+  /usr/bin/chromium
+  /usr/bin/chromium-browser
+
+Installed chromium package files:"
+    apk info -L chromium 2>&1 || true
+    exit 1
 fi
 
 if [ -x /usr/bin/chromedriver ]; then
