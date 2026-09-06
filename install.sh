@@ -205,18 +205,6 @@ do
 
 done
 
-
-if [ -z "$CHROMIUM_ELF" ]; then
-
-    die "Chromium ELF was not installed
-
-Expected one of:
-  /usr/lib/chromium/chromium
-  /usr/lib/chromium/chrome"
-
-fi
-
-
 log "Chromium launcher:"
 log "  $CHROMIUM_LAUNCHER"
 
