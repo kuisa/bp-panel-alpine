@@ -508,7 +508,6 @@ REQUIREMENTS=""
 for REQUIREMENT_FILE in \
     "$ROOT/requirements-dp.txt" \
     "$ROOT/requirements-sb.txt" \
-    "$ROOT/requirements-playwright.txt"
 do
 
     if [ -f "$REQUIREMENT_FILE" ]; then
