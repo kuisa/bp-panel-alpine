@@ -503,19 +503,19 @@ $PYTHON_PIP install \
 # Existing requirements files
 # ============================================================
 
+# ============================================================
+# Existing requirements files
+# ============================================================
+
 REQUIREMENTS=""
 
 for REQUIREMENT_FILE in \
     "$ROOT/requirements-dp.txt" \
-    "$ROOT/requirements-sb.txt" \
+    "$ROOT/requirements-sb.txt"
 do
-
     if [ -f "$REQUIREMENT_FILE" ]; then
-
-        REQUIREMENTS="$REQUIREMENTS -r $REQUIREMENT_FILE"
-
+        REQUIREMENTS="$REQUIREMENTS $REQUIREMENT_FILE"
     fi
-
 done
 
 
