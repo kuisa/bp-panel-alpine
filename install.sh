@@ -3,17 +3,65 @@
 # ============================================================
 # Alpine Linux browser-panel dependency installer
 # ============================================================
+#
+# Designed for:
+#   Alpine Linux 3.20+
+#   Alpine Linux 3.21+
+#   Alpine Linux 3.22+
+#
+# Installs:
+#   - Chromium
+#   - Chromium ChromeDriver
+#   - Xvfb
+#   - xauth
+#   - xdotool
+#   - scrot
+#   - ffmpeg
+#   - Noto fonts / CJK / Emoji
+#   - Python 3 + pip
+#   - Python build toolchain
+#   - Node.js + npm
+#   - DrissionPage
+#   - Selenium
+#   - SeleniumBase
+#   - Pyrogram
+#   - TgCrypto
+#   - SpeechRecognition
+#   - pydub
+#   - numpy
+#   - Pillow
+#
+# IMPORTANT:
+#   Playwright is NOT installed.
+#
+#   Playwright Python/browser support on Alpine/musl is problematic.
+#   This installer uses the system Chromium + ChromeDriver instead.
+#
+# ============================================================
 
 set -eu
 
+
+# ============================================================
+# Configuration
+# ============================================================
+
 ROOT="${PANEL_ROOT:-/opt/browser-panel}"
+
 ENV_FILE="${PANEL_ENV:-$ROOT/.env.panel}"
 
 BROWSER_USER="${BROWSER_USER:-browser}"
+
 BROWSER_HOME="${BROWSER_HOME:-/home/$BROWSER_USER}"
+
 BROWSER_WORK="${BROWSER_WORK_DIR:-$BROWSER_HOME/browser-work}"
 
 DISPLAY_NUM="${BROWSER_DISPLAY:-:1}"
+
+
+# ============================================================
+# Helpers
+# ============================================================
 
 log() {
     echo "[browser-panel] $*"
@@ -26,51 +74,70 @@ die() {
 
 
 # ============================================================
-# Root
+# Root check
 # ============================================================
 
 if [ "$(id -u)" -ne 0 ]; then
-    die "please run as root"
+    die "please run this installer as root"
 fi
 
 
 # ============================================================
-# Alpine
+# Alpine check
 # ============================================================
 
 if [ ! -f /etc/alpine-release ]; then
-    die "this installer is for Alpine Linux"
+    die "this installer is for Alpine Linux only"
 fi
 
 if ! command -v apk >/dev/null 2>&1; then
-    die "apk not found"
+    die "apk command not found"
 fi
 
 
 ALPINE_VERSION="$(cat /etc/alpine-release)"
-BRANCH="$(echo "$ALPINE_VERSION" | cut -d. -f1,2)"
 
-log "Alpine: $ALPINE_VERSION"
+ALPINE_BRANCH="$(echo "$ALPINE_VERSION" | cut -d. -f1,2)"
+
+ARCH="$(uname -m)"
+
+
+log "========================================"
+log "Alpine browser-panel installer"
+log "========================================"
+log "Alpine:       $ALPINE_VERSION"
+log "Architecture: $ARCH"
+log "Panel root:   $ROOT"
+log "Browser user: $BROWSER_USER"
+log "Display:      $DISPLAY_NUM"
+log "========================================"
 
 
 # ============================================================
-# Repository
+# Alpine repositories
 # ============================================================
+
+log "Configuring Alpine repositories"
 
 if [ -f /etc/apk/repositories ]; then
 
     if ! grep -Eq '^[[:space:]]*[^#].*/community/?[[:space:]]*$' \
         /etc/apk/repositories
     then
-        echo "https://dl-cdn.alpinelinux.org/alpine/v${BRANCH}/community" \
+
+        echo \
+            "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_BRANCH}/community" \
             >> /etc/apk/repositories
+
+        log "Added community repository"
+
     fi
 
 fi
 
 
 # ============================================================
-# APK
+# APK update
 # ============================================================
 
 log "Updating APK indexes"
@@ -79,10 +146,10 @@ apk update
 
 
 # ============================================================
-# System dependencies
+# System packages
 # ============================================================
 
-log "Installing system dependencies"
+log "Installing system packages"
 
 apk add --no-cache \
     ca-certificates \
@@ -124,13 +191,82 @@ apk add --no-cache \
     libstdc++ \
     tzdata
 
+
+# ============================================================
 # Optional font
-apk add --no-cache font-opensans 2>/dev/null || true
+# ============================================================
+
+apk add --no-cache \
+    font-opensans \
+    2>/dev/null || true
+
+
+# Refresh font cache if available.
+
+if command -v fc-cache >/dev/null 2>&1; then
+    fc-cache -f >/dev/null 2>&1 || true
+fi
+
+
+# ============================================================
+# Chromium path
+# ============================================================
+
+# Alpine normally provides:
+#
+#   /usr/bin/chromium
+#
+# Some older/custom environments may provide:
+#
+#   /usr/bin/chromium-browser
+#
+# Do NOT abort installation if the path is unusual.
+# Just select the common path for the environment file.
+
+if [ -x /usr/bin/chromium ]; then
+
+    CHROME_PATH="/usr/bin/chromium"
+
+elif [ -x /usr/bin/chromium-browser ]; then
+
+    CHROME_PATH="/usr/bin/chromium-browser"
+
+else
+
+    CHROME_PATH="/usr/bin/chromium"
+
+fi
+
+
+# ============================================================
+# ChromeDriver path
+# ============================================================
+
+if [ -x /usr/bin/chromedriver ]; then
+
+    CHROMEDRIVER_PATH="/usr/bin/chromedriver"
+
+elif [ -x /usr/lib/chromium/chromedriver ]; then
+
+    CHROMEDRIVER_PATH="/usr/lib/chromium/chromedriver"
+
+else
+
+    CHROMEDRIVER_PATH="/usr/bin/chromedriver"
+
+fi
+
+
+log "Chromium path:     $CHROME_PATH"
+
+log "ChromeDriver path: $CHROMEDRIVER_PATH"
 
 
 # ============================================================
 # Browser user
 # ============================================================
+
+log "Configuring browser user"
 
 if ! id "$BROWSER_USER" >/dev/null 2>&1; then
 
@@ -146,7 +282,7 @@ fi
 
 
 # ============================================================
-# Directories
+# Browser directories
 # ============================================================
 
 log "Creating browser directories"
@@ -164,6 +300,10 @@ mkdir -p \
     "$BROWSER_WORK/archived_files"
 
 
+# ============================================================
+# Permissions
+# ============================================================
+
 chown -R \
     "$BROWSER_USER:$BROWSER_USER" \
     "$BROWSER_HOME"
@@ -175,107 +315,153 @@ chmod -R a+rX \
 
 
 # ============================================================
-# Chromium paths
+# Environment file
 # ============================================================
 
-# Alpine normally uses /usr/bin/chromium.
-# Keep chromium-browser as fallback.
-
-if [ -x /usr/bin/chromium ]; then
-    CHROME_PATH="/usr/bin/chromium"
-else
-    CHROME_PATH="/usr/bin/chromium-browser"
-fi
-
-
-if [ -x /usr/bin/chromedriver ]; then
-    CHROMEDRIVER_PATH="/usr/bin/chromedriver"
-else
-    CHROMEDRIVER_PATH="/usr/lib/chromium/chromedriver"
-fi
-
-
-# ============================================================
-# .env.panel
-# ============================================================
-
-log "Writing $ENV_FILE"
+log "Configuring environment: $ENV_FILE"
 
 mkdir -p "$(dirname "$ENV_FILE")"
 
 touch "$ENV_FILE"
 
 
+# ============================================================
+# set_kv
+# ============================================================
+
 set_kv() {
 
     KEY="$1"
+
     VALUE="$2"
 
-    TMP="${ENV_FILE}.tmp.$$"
+    TMP_FILE="${ENV_FILE}.tmp.$$"
+
 
     if grep -q "^${KEY}=" "$ENV_FILE" 2>/dev/null; then
 
         sed \
             "s|^${KEY}=.*|${KEY}=${VALUE}|" \
-            "$ENV_FILE" > "$TMP"
+            "$ENV_FILE" \
+            > "$TMP_FILE"
 
-        mv "$TMP" "$ENV_FILE"
+        mv "$TMP_FILE" "$ENV_FILE"
 
     else
 
         printf '%s=%s\n' \
             "$KEY" \
-            "$VALUE" >> "$ENV_FILE"
+            "$VALUE" \
+            >> "$ENV_FILE"
 
     fi
 }
 
 
+# ============================================================
+# set_kv_if_missing
+# ============================================================
+
 set_kv_if_missing() {
 
     KEY="$1"
+
     VALUE="$2"
+
 
     if ! grep -q "^${KEY}=" "$ENV_FILE" 2>/dev/null; then
 
         printf '%s=%s\n' \
             "$KEY" \
-            "$VALUE" >> "$ENV_FILE"
+            "$VALUE" \
+            >> "$ENV_FILE"
 
     fi
 }
 
 
 # ============================================================
-# Panel
+# Panel configuration
 # ============================================================
 
-set_kv_if_missing PORT "3210"
-set_kv_if_missing HOST "0.0.0.0"
+set_kv_if_missing \
+    PORT \
+    "3210"
 
-set_kv BROWSER_DISPLAY "$DISPLAY_NUM"
 
-set_kv BROWSER_CHROME_PATH "$CHROME_PATH"
+set_kv_if_missing \
+    HOST \
+    "0.0.0.0"
 
-set_kv BROWSER_USER "$BROWSER_USER"
-set_kv BROWSER_HOME "$BROWSER_HOME"
-set_kv BROWSER_WORK_DIR "$BROWSER_WORK"
 
-set_kv BROWSER_XAUTHORITY \
-    "$BROWSER_HOME/.Xauthority"
+set_kv \
+    BROWSER_DISPLAY \
+    "$DISPLAY_NUM"
 
-set_kv BROWSER_USER_DATA_DIR \
-    "$BROWSER_WORK/persistent"
 
-set_kv_if_missing CHROMEDRIVER_PATH \
+# ============================================================
+# Chromium
+# ============================================================
+
+set_kv \
+    BROWSER_CHROME_PATH \
+    "$CHROME_PATH"
+
+
+set_kv \
+    CHROME_PATH \
+    "$CHROME_PATH"
+
+
+# ============================================================
+# ChromeDriver
+# ============================================================
+
+set_kv \
+    CHROMEDRIVER_PATH \
+    "$CHROMEDRIVER_PATH"
+
+
+set_kv \
+    WEBDRIVER_CHROME_DRIVER \
     "$CHROMEDRIVER_PATH"
 
 
 # ============================================================
-# Permissions
+# Browser user
+# ============================================================
+
+set_kv \
+    BROWSER_USER \
+    "$BROWSER_USER"
+
+
+set_kv \
+    BROWSER_HOME \
+    "$BROWSER_HOME"
+
+
+set_kv \
+    BROWSER_WORK_DIR \
+    "$BROWSER_WORK"
+
+
+set_kv \
+    BROWSER_XAUTHORITY \
+    "$BROWSER_HOME/.Xauthority"
+
+
+set_kv \
+    BROWSER_USER_DATA_DIR \
+    "$BROWSER_WORK/persistent"
+
+
+# ============================================================
+# Environment permissions
 # ============================================================
 
 chown root:root "$ENV_FILE"
+
 chmod 0644 "$ENV_FILE"
 
 
@@ -285,22 +471,68 @@ chmod 0644 "$ENV_FILE"
 
 log "Installing Python packages"
 
-python3 -m pip install \
-    --break-system-packages \
-    --ignore-installed \
-    --disable-pip-version-check \
-    --no-cache-dir \
+
+PYTHON_PIP="python3 -m pip"
+
+
+PIP_OPTIONS="
+--break-system-packages
+--ignore-installed
+--disable-pip-version-check
+--no-cache-dir
+"
+
+
+# ============================================================
+# Python build helpers
+# ============================================================
+
+log "Installing Python build helpers"
+
+
+# shellcheck disable=SC2086
+
+$PYTHON_PIP install \
+    $PIP_OPTIONS \
     -U \
     setuptools \
     wheel
 
 
-python3 -m pip install \
-    --break-system-packages \
-    --ignore-installed \
-    --disable-pip-version-check \
-    --no-cache-dir \
+# ============================================================
+# Existing requirements files
+# ============================================================
+
+REQUIREMENTS=""
+
+for REQUIREMENT_FILE in \
+    "$ROOT/requirements-dp.txt" \
+    "$ROOT/requirements-sb.txt" \
+    "$ROOT/requirements-playwright.txt"
+do
+
+    if [ -f "$REQUIREMENT_FILE" ]; then
+
+        REQUIREMENTS="$REQUIREMENTS -r $REQUIREMENT_FILE"
+
+    fi
+
+done
+
+
+# ============================================================
+# Main Python packages
+# ============================================================
+
+log "Installing browser automation Python stack"
+
+
+# shellcheck disable=SC2086
+
+$PYTHON_PIP install \
+    $PIP_OPTIONS \
     -U \
+    $REQUIREMENTS \
     "requests>=2.31.0" \
     "urllib3>=2.0.0" \
     "Pillow>=10.0.0" \
@@ -315,44 +547,56 @@ python3 -m pip install \
 
 
 # ============================================================
-# Existing requirements files
+# NOTE ABOUT PLAYWRIGHT
 # ============================================================
-
-for FILE in \
-    "$ROOT/requirements-dp.txt" \
-    "$ROOT/requirements-sb.txt" \
-    "$ROOT/requirements-playwright.txt"
-do
-
-    if [ -f "$FILE" ]; then
-
-        log "Installing $FILE"
-
-        python3 -m pip install \
-            --break-system-packages \
-            --ignore-installed \
-            --disable-pip-version-check \
-            --no-cache-dir \
-            -r "$FILE"
-
-    fi
-
-done
+#
+# Playwright is intentionally NOT installed here.
+#
+# Alpine Linux uses musl instead of glibc.
+#
+# The browser-panel stack uses:
+#
+#   Chromium
+#   ChromeDriver
+#   Selenium
+#   SeleniumBase
+#   DrissionPage
+#
+# instead.
+#
+# ============================================================
 
 
 # ============================================================
-# Environment
+# XAUTHORITY
+# ============================================================
+
+XAUTH_FILE="$BROWSER_HOME/.Xauthority"
+
+
+if [ ! -e "$XAUTH_FILE" ]; then
+
+    touch "$XAUTH_FILE"
+
+fi
+
+
+chown \
+    "$BROWSER_USER:$BROWSER_USER" \
+    "$XAUTH_FILE"
+
+
+# ============================================================
+# Environment export
 # ============================================================
 
 export DISPLAY="$DISPLAY_NUM"
-export XAUTHORITY="$BROWSER_HOME/.Xauthority"
 
-export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-export PLAYWRIGHT_BROWSERS_PATH=0
+export XAUTHORITY="$XAUTH_FILE"
 
 
 # ============================================================
-# Done
+# Final environment
 # ============================================================
 
 echo
@@ -360,15 +604,60 @@ echo "========================================"
 echo " Browser Panel Dependencies Installed"
 echo "========================================"
 echo
-echo "Chromium:      $CHROME_PATH"
-echo "ChromeDriver:  $CHROMEDRIVER_PATH"
-echo "Python:        $(python3 --version 2>&1)"
-echo "Node:          $(node -v)"
-echo "npm:           $(npm -v)"
-echo "Display:       $DISPLAY_NUM"
-echo "Browser user:  $BROWSER_USER"
-echo "Work dir:      $BROWSER_WORK"
-echo "Env:           $ENV_FILE"
+echo "Alpine:          $ALPINE_VERSION"
+echo "Architecture:    $ARCH"
 echo
-echo "Playwright browser download: DISABLED"
+echo "Chromium:"
+echo "  $CHROME_PATH"
+echo
+echo "ChromeDriver:"
+echo "  $CHROMEDRIVER_PATH"
+echo
+echo "Python:"
+echo "  $(python3 --version 2>&1)"
+echo
+echo "Node:"
+echo "  $(node -v 2>/dev/null || echo unknown)"
+echo
+echo "npm:"
+echo "  $(npm -v 2>/dev/null || echo unknown)"
+echo
+echo "Display:"
+echo "  $DISPLAY_NUM"
+echo
+echo "Browser user:"
+echo "  $BROWSER_USER"
+echo
+echo "Browser home:"
+echo "  $BROWSER_HOME"
+echo
+echo "Browser work:"
+echo "  $BROWSER_WORK"
+echo
+echo "Environment:"
+echo "  $ENV_FILE"
+echo
+echo "========================================"
+echo
+echo "Installed:"
+echo "  Chromium"
+echo "  Chromium ChromeDriver"
+echo "  Xvfb"
+echo "  Xauth"
+echo "  xdotool"
+echo "  scrot"
+echo "  ffmpeg"
+echo "  Noto fonts"
+echo "  Python 3"
+echo "  Node.js"
+echo "  Selenium"
+echo "  SeleniumBase"
+echo "  DrissionPage"
+echo
+echo "Playwright:"
+echo "  NOT INSTALLED (Alpine/musl)"
+echo
+echo "========================================"
+echo " Installation finished"
+echo "========================================"
 echo
