@@ -188,39 +188,6 @@ update-ca-certificates >/dev/null 2>&1 || true
 
 
 # ============================================================
-# Chromium detection
-# ============================================================
-
-log "detecting Chromium"
-
-
-CHROMIUM_LAUNCHER=""
-
-for candidate in \
-    /usr/bin/chromium \
-    /usr/bin/chromium-browser
-do
-
-    if [ -x "$candidate" ]; then
-        CHROMIUM_LAUNCHER="$candidate"
-        break
-    fi
-
-done
-
-
-if [ -z "$CHROMIUM_LAUNCHER" ]; then
-
-    die "Chromium launcher was not installed
-
-Checked:
-  /usr/bin/chromium
-  /usr/bin/chromium-browser"
-
-fi
-
-
-# ============================================================
 # Real Chromium ELF
 # ============================================================
 
