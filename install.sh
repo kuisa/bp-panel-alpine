@@ -55,10 +55,6 @@ BROWSER_WORK="${BROWSER_WORK_DIR:-$BROWSER_HOME/browser-work}"
 
 DISPLAY_NUM="${BROWSER_DISPLAY:-:1}"
 
-XVFB_DISPLAY=":1"
-
-XVFB_SERVICE="/etc/init.d/xvfb-browser"
-
 
 # ============================================================
 # Helpers
@@ -735,242 +731,6 @@ log "Playwright browser download disabled"
 log "System Chromium will be used."
 
 
-HEADLESS_OUTPUT="/tmp/browser-stack-chromium-test.txt"
-
-HEADLESS_ERROR="/tmp/browser-stack-chromium-error.txt"
-
-
-rm -f \
-    "$HEADLESS_OUTPUT" \
-    "$HEADLESS_ERROR"
-
-
-if "$CHROMIUM_LAUNCHER" \
-    --headless \
-    --no-sandbox \
-    --disable-dev-shm-usage \
-    --disable-gpu \
-    --no-first-run \
-    --no-default-browser-check \
-    --dump-dom \
-    'data:text/html,<html><body>chromium-ok</body></html>' \
-    >"$HEADLESS_OUTPUT" \
-    2>"$HEADLESS_ERROR"
-then
-
-    if grep -q "chromium-ok" "$HEADLESS_OUTPUT"; then
-
-        log "Chromium headless: OK"
-
-    else
-
-        warn "Chromium started but returned unexpected HTML"
-
-        cat "$HEADLESS_ERROR" >&2 || true
-
-    fi
-
-else
-
-    cat "$HEADLESS_ERROR" >&2 || true
-
-    die "Chromium headless smoke test failed"
-
-fi
-
-
-# ============================================================
-# Chromium + Xvfb smoke test
-# ============================================================
-
-log "========================================"
-log "Chromium + Xvfb smoke test"
-log "========================================"
-
-
-XVFB_OUTPUT="/tmp/browser-stack-xvfb-test.txt"
-
-XVFB_ERROR="/tmp/browser-stack-xvfb-error.txt"
-
-
-rm -f \
-    "$XVFB_OUTPUT" \
-    "$XVFB_ERROR"
-
-
-SMOKE_PROFILE="$BROWSER_WORK/.smoke-profile"
-
-rm -rf "$SMOKE_PROFILE"
-
-mkdir -p "$SMOKE_PROFILE"
-
-chown \
-    "$BROWSER_USER:$BROWSER_USER" \
-    "$SMOKE_PROFILE"
-
-
-if su-exec \
-    "$BROWSER_USER" \
-    env \
-        DISPLAY="$DISPLAY_NUM" \
-        XAUTHORITY="$BROWSER_HOME/.Xauthority" \
-        "$CHROMIUM_LAUNCHER" \
-        --no-sandbox \
-        --disable-dev-shm-usage \
-        --disable-gpu \
-        --no-first-run \
-        --no-default-browser-check \
-        --user-data-dir="$SMOKE_PROFILE" \
-        --dump-dom \
-        'data:text/html,<html><body>xvfb-ok</body></html>' \
-        >"$XVFB_OUTPUT" \
-        2>"$XVFB_ERROR"
-then
-
-    if grep -q "xvfb-ok" "$XVFB_OUTPUT"; then
-
-        log "Chromium + Xvfb: OK"
-
-    else
-
-        warn "Chromium + Xvfb returned unexpected output"
-
-        cat "$XVFB_ERROR" >&2 || true
-
-    fi
-
-else
-
-    warn "Chromium + Xvfb smoke test failed"
-
-    cat "$XVFB_ERROR" >&2 || true
-
-fi
-
-
-rm -rf "$SMOKE_PROFILE"
-
-rm -f \
-    "$HEADLESS_OUTPUT" \
-    "$HEADLESS_ERROR" \
-    "$XVFB_OUTPUT" \
-    "$XVFB_ERROR"
-
-
-# ============================================================
-# Final verification
-# ============================================================
-
-log ""
-log "========================================"
-log "FINAL VERIFICATION"
-log "========================================"
-
-
-echo ""
-echo "Alpine:"
-echo "  $(cat /etc/alpine-release)"
-
-
-echo ""
-echo "Architecture:"
-echo "  $ARCH"
-
-
-echo ""
-echo "Chromium launcher:"
-echo "  $CHROMIUM_LAUNCHER"
-
-
-echo ""
-echo "Chromium ELF:"
-echo "  $CHROMIUM_ELF"
-
-
-echo ""
-echo "Chromium version:"
-echo "  $CHROMIUM_VERSION"
-
-
-echo ""
-echo "ChromeDriver:"
-echo "  $CHROMEDRIVER"
-
-
-echo ""
-echo "ChromeDriver version:"
-echo "  $CHROMEDRIVER_VERSION"
-
-
-echo ""
-echo "Node:"
-echo "  $(node -v)"
-
-
-echo ""
-echo "npm:"
-echo "  $(npm -v)"
-
-
-echo ""
-echo "Python:"
-echo "  $(python3 --version 2>&1)"
-
-
-echo ""
-echo "DISPLAY:"
-echo "  $DISPLAY_NUM"
-
-
-echo ""
-echo "Browser user:"
-echo "  $BROWSER_USER"
-
-
-echo ""
-echo "Browser home:"
-echo "  $BROWSER_HOME"
-
-
-echo ""
-echo "Browser work:"
-echo "  $BROWSER_WORK"
-
-
-echo ""
-echo "Environment:"
-echo "  $ENV_FILE"
-
-
-if have rc-service; then
-
-    if rc-service xvfb-browser status >/dev/null 2>&1; then
-        echo ""
-        echo "Xvfb service:"
-        echo "  ACTIVE"
-    else
-        echo ""
-        echo "Xvfb service:"
-        echo "  INACTIVE"
-    fi
-
-fi
-
-
-echo ""
-echo "Running Xvfb:"
-pgrep -a Xvfb || true
-
-
-echo ""
-echo "Chromium path test:"
-"$CHROMIUM_LAUNCHER" --version
-
-
-echo ""
-echo "ChromeDriver path test:"
-"$CHROMEDRIVER" --version
-
 
 echo ""
 echo "========================================"
@@ -984,9 +744,6 @@ log "  $CHROMIUM_LAUNCHER"
 log "ChromeDriver:"
 log "  $CHROMEDRIVER"
 
-log "Xvfb:"
-log "  DISPLAY=:1"
-
 log "Environment:"
 log "  $ENV_FILE"
 
@@ -994,6 +751,7 @@ log ""
 log "Important:"
 log "  - Use /usr/bin/chromium for browser-panel."
 log "  - Do NOT run: playwright install"
-log "  - Do NOT manually start another Xvfb on :1"
+log "  - Xvfb must be started manually in proot mode"
+log "  - Use DISPLAY=:1 before starting browser-panel"
 log "  - ChromeDriver comes from Alpine chromium-chromedriver."
 log "  - Playwright uses system Chromium."
