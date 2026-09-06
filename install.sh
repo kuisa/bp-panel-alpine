@@ -256,7 +256,6 @@ set_kv_if_missing HOST "0.0.0.0"
 set_kv BROWSER_DISPLAY "$DISPLAY_NUM"
 
 set_kv BROWSER_CHROME_PATH "$CHROME_PATH"
-set_kv PLAYWRIGHT_CHROME_PATH "$CHROME_PATH"
 
 set_kv BROWSER_USER "$BROWSER_USER"
 set_kv BROWSER_HOME "$BROWSER_HOME"
@@ -267,9 +266,6 @@ set_kv BROWSER_XAUTHORITY \
 
 set_kv BROWSER_USER_DATA_DIR \
     "$BROWSER_WORK/persistent"
-
-set_kv PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD "1"
-set_kv PLAYWRIGHT_BROWSERS_PATH "0"
 
 set_kv_if_missing CHROMEDRIVER_PATH \
     "$CHROMEDRIVER_PATH"
@@ -311,7 +307,6 @@ python3 -m pip install \
     "DrissionPage>=4.1.0" \
     "selenium>=4.20.0" \
     "seleniumbase>=4.30.0" \
-    "playwright>=1.40.0" \
     "pyrogram>=2.0.0" \
     "TgCrypto>=1.2.0" \
     "SpeechRecognition>=3.10.0" \
