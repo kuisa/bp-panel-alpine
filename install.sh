@@ -1,71 +1,31 @@
 #!/bin/sh
-
-# ============================================================
-# browser-panel Alpine Browser Stack Installer
-# ============================================================
-#
-# Alpine Linux
-#
+# Alpine Linux browser-panel runtime installer
 # Installs:
-#   - Chromium
-#   - Chromium ChromeDriver
-#   - Xvfb
-#   - xauth
-#   - xdotool
-#   - scrot
-#   - ffmpeg
-#   - Noto fonts
-#   - Python 3 + pip
-#   - Node.js + npm
-#   - browser-panel Python dependencies
+#   Chromium + matching chromedriver
+#   Xvfb + Xauth + xdotool + screenshots
+#   Python3 + pip + build toolchain
+#   Node.js + npm
+#   ffmpeg + CJK/emoji fonts
+#   DrissionPage / Selenium / SeleniumBase / Playwright
+#   Pyrogram / TgCrypto / SpeechRecognition / pydub / numpy / Pillow
 #
-# Browser:
-#   /usr/bin/chromium
-#
-# Real Chromium ELF:
-#   /usr/lib/chromium/chromium
-#
-# ChromeDriver:
-#   /usr/bin/chromedriver
-#
-# Xvfb:
-#   DISPLAY=:1
-#
-# Environment:
-#   /opt/browser-panel/.env.panel
-#
-# ============================================================
+# Designed for Alpine Linux 3.20+ / 3.21+ / 3.22+ / 3.23+ / 3.24+.
+# Does NOT use systemd. Xvfb is managed with OpenRC when available,
+# otherwise it is started directly for containers/minimal environments.
 
 set -eu
 
-
-# ============================================================
-# Configuration
-# ============================================================
-
 ROOT="${PANEL_ROOT:-/opt/browser-panel}"
-
 ENV_FILE="${PANEL_ENV:-$ROOT/.env.panel}"
-
 BROWSER_USER="${BROWSER_USER:-browser}"
-
 BROWSER_HOME="${BROWSER_HOME:-/home/$BROWSER_USER}"
-
 BROWSER_WORK="${BROWSER_WORK_DIR:-$BROWSER_HOME/browser-work}"
-
 DISPLAY_NUM="${BROWSER_DISPLAY:-:1}"
-
-
-# ============================================================
-# Helpers
-# ============================================================
+CHROME_PATH="/usr/bin/chromium-browser"
+CHROMEDRIVER_PATH="/usr/bin/chromedriver"
 
 log() {
     echo "[install-browser-stack-alpine] $*"
-}
-
-warn() {
-    echo "[install-browser-stack-alpine] WARN: $*" >&2
 }
 
 die() {
@@ -73,88 +33,63 @@ die() {
     exit 1
 }
 
+need_root() {
+    [ "$(id -u)" -eq 0 ] || die "run as root: sh $0"
+}
+
 have() {
     command -v "$1" >/dev/null 2>&1
 }
 
+need_root
 
-# ============================================================
-# Root / Alpine check
-# ============================================================
-
-if [ "$(id -u)" -ne 0 ]; then
-    die "please run as root"
+# ---------------------------------------------------------------------------
+# Alpine check
+# ---------------------------------------------------------------------------
+if [ ! -f /etc/alpine-release ] || ! have apk; then
+    die "This installer is for Alpine Linux only."
 fi
-
-if [ ! -f /etc/alpine-release ]; then
-    die "this installer is only for Alpine Linux"
-fi
-
-if ! have apk; then
-    die "apk command not found"
-fi
-
 
 ALPINE_VERSION="$(cat /etc/alpine-release)"
 ARCH="$(uname -m)"
+log "Alpine $ALPINE_VERSION / arch=$ARCH"
 
-log "========================================"
-log "Alpine Browser Stack"
-log "========================================"
-log "Alpine:       $ALPINE_VERSION"
-log "Architecture: $ARCH"
-log "Panel root:   $ROOT"
-log "Browser user: $BROWSER_USER"
-log "Display:      $DISPLAY_NUM"
+# ---------------------------------------------------------------------------
+# APK repositories
+# ---------------------------------------------------------------------------
+log "Enabling Alpine community repository"
 
-
-# ============================================================
-# Alpine repositories
-# ============================================================
-
-log "checking Alpine repositories"
-
-if ! grep -q '/community' /etc/apk/repositories 2>/dev/null; then
-
-    ALPINE_BRANCH="$(echo "$ALPINE_VERSION" | cut -d. -f1,2)"
-
-    COMMUNITY_REPO="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_BRANCH}/community"
-
-    echo "$COMMUNITY_REPO" >> /etc/apk/repositories
-
-    log "added community repository:"
-    log "  $COMMUNITY_REPO"
-
+if [ -f /etc/apk/repositories ]; then
+    # Keep the current Alpine branch. Add community if it is missing.
+    if ! grep -Eq '^[[:space:]]*[^#].*/community/?[[:space:]]*$' /etc/apk/repositories; then
+        BRANCH="$(echo "$ALPINE_VERSION" | cut -d. -f1,2)"
+        echo "https://dl-cdn.alpinelinux.org/alpine/v${BRANCH}/community" >> /etc/apk/repositories
+        log "Added community repository for v${BRANCH}"
+    fi
 fi
-
-
-# ============================================================
-# apk update
-# ============================================================
-
-log "apk update"
 
 apk update
 
-
-# ============================================================
+# ---------------------------------------------------------------------------
 # Base packages
-# ============================================================
-
-log "installing system packages"
+# ---------------------------------------------------------------------------
+# chromium itself pulls its required GTK/NSS/X11/mesa libraries.
+# chromium-chromedriver is deliberately installed from the SAME Alpine repo
+# so the driver matches the installed Chromium package.
+log "Installing Alpine base/browser packages"
 
 apk add --no-cache \
     ca-certificates \
     curl \
     wget \
+    unzip \
+    tar \
+    gzip \
     bash \
     coreutils \
     findutils \
     grep \
     sed \
-    tar \
-    gzip \
-    unzip \
     procps \
     shadow \
     su-exec \
@@ -183,189 +118,60 @@ apk add --no-cache \
     libstdc++ \
     tzdata
 
+# Some Alpine releases use different names/availability for the extra font
+# packages. They are optional because Chromium already has its core fonts.
+apk add --no-cache font-opensans 2>/dev/null || true
 
-update-ca-certificates >/dev/null 2>&1 || true
+fc-cache -f >/dev/null 2>&1 || true
 
-
-# ============================================================
-# Real Chromium ELF
-# ============================================================
-
-CHROMIUM_ELF=""
-
-for candidate in \
-    /usr/lib/chromium/chromium \
-    /usr/lib/chromium/chrome
-do
-
-    if [ -x "$candidate" ]; then
-        CHROMIUM_ELF="$candidate"
-        break
-    fi
-
-done
-
-log "Chromium launcher:"
-log "  $CHROMIUM_LAUNCHER"
-
-log "Chromium ELF:"
-log "  $CHROMIUM_ELF"
-
-
-# ============================================================
-# Chromium version
-# ============================================================
-
-CHROMIUM_VERSION="$("$CHROMIUM_LAUNCHER" --version 2>/dev/null || true)"
-
-if [ -z "$CHROMIUM_VERSION" ]; then
-    die "Chromium launcher exists but cannot execute"
+# ---------------------------------------------------------------------------
+# Verify Chromium and chromedriver
+# ---------------------------------------------------------------------------
+if [ -x /usr/bin/chromium-browser ]; then
+    CHROME_PATH="/usr/bin/chromium-browser"
+elif [ -x /usr/bin/chromium ]; then
+    CHROME_PATH="/usr/bin/chromium"
+else
+    die "Chromium binary was not installed."
 fi
 
-log "Chromium:"
-log "  $CHROMIUM_VERSION"
-
-
-# ============================================================
-# ChromeDriver
-# ============================================================
-
-log "detecting ChromeDriver"
-
-CHROMEDRIVER=""
-
-for candidate in \
-    /usr/bin/chromedriver \
-    /usr/lib/chromium/chromedriver
-do
-
-    if [ -x "$candidate" ]; then
-        CHROMEDRIVER="$candidate"
-        break
-    fi
-
-done
-
-
-if [ -z "$CHROMEDRIVER" ]; then
-
-    die "ChromeDriver was not installed
-
-Expected:
-  /usr/bin/chromedriver
-  /usr/lib/chromium/chromedriver"
-
-fi
-
-
-# Prefer PATH version.
 if [ -x /usr/bin/chromedriver ]; then
-    CHROMEDRIVER="/usr/bin/chromedriver"
+    CHROMEDRIVER_PATH="/usr/bin/chromedriver"
+elif [ -x /usr/lib/chromium/chromedriver ]; then
+    CHROMEDRIVER_PATH="/usr/lib/chromium/chromedriver"
+else
+    die "chromedriver was not installed."
 fi
 
+log "Chromium: $CHROME_PATH"
+"$CHROME_PATH" --version || die "Chromium cannot execute"
 
-CHROMEDRIVER_VERSION="$("$CHROMEDRIVER" --version 2>/dev/null || true)"
+log "Chromedriver: $CHROMEDRIVER_PATH"
+"$CHROMEDRIVER_PATH" --version || die "chromedriver cannot execute"
 
-if [ -z "$CHROMEDRIVER_VERSION" ]; then
-    die "ChromeDriver exists but cannot execute"
-fi
+# ---------------------------------------------------------------------------
+# Node.js / npm
+# ---------------------------------------------------------------------------
+have node || die "Node.js installation failed"
+have npm || die "npm installation failed"
 
+NODE_MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+[ "$NODE_MAJOR" -ge 18 ] || die "Node.js >= 18 is required; found $(node -v)"
 
-log "ChromeDriver:"
-log "  $CHROMEDRIVER"
+log "Node.js $(node -v)"
+log "npm $(npm -v)"
 
-log "Driver version:"
-log "  $CHROMEDRIVER_VERSION"
-
-
-# ============================================================
-# Node.js
-# ============================================================
-
-log "checking Node.js"
-
-if ! have node; then
-    die "Node.js installation failed"
-fi
-
-if ! have npm; then
-    die "npm installation failed"
-fi
-
-
-NODE_MAJOR="$(
-    node -p 'Number(process.versions.node.split(".")[0])' \
-    2>/dev/null || echo 0
-)"
-
-
-case "$NODE_MAJOR" in
-    ''|*[!0-9]*)
-        die "cannot determine Node.js version"
-        ;;
-esac
-
-
-if [ "$NODE_MAJOR" -lt 18 ]; then
-    die "Node.js >= 18 required; found $(node -v)"
-fi
-
-
-log "Node:"
-log "  $(node -v)"
-
-log "npm:"
-log "  $(npm -v)"
-
-
-# ============================================================
-# Python
-# ============================================================
-
-if ! have python3; then
-    die "python3 installation failed"
-fi
-
-if ! python3 -m pip --version >/dev/null 2>&1; then
-    die "python3-pip installation failed"
-fi
-
-
-log "Python:"
-log "  $(python3 --version 2>&1)"
-
-log "pip:"
-python3 -m pip --version
-
-
-# ============================================================
-# Browser user
-# ============================================================
-
-log "checking browser user"
-
+# ---------------------------------------------------------------------------
+# Browser user + directories
+# ---------------------------------------------------------------------------
 if ! id "$BROWSER_USER" >/dev/null 2>&1; then
-
-    log "creating user: $BROWSER_USER"
-
-    adduser \
-        -D \
-        -h "$BROWSER_HOME" \
-        -s /bin/bash \
-        "$BROWSER_USER"
-
+    log "Creating user: $BROWSER_USER"
+    adduser -D -h "$BROWSER_HOME" -s /bin/bash "$BROWSER_USER"
 fi
-
-
-# ============================================================
-# Browser directories
-# ============================================================
-
-log "creating browser directories"
 
 mkdir -p \
+    "$ROOT" \
     "$BROWSER_HOME" \
-    "$BROWSER_WORK" \
     "$BROWSER_WORK/persistent" \
     "$BROWSER_WORK/profiles" \
     "$BROWSER_WORK/screenshots" \
@@ -374,231 +180,96 @@ mkdir -p \
     "$BROWSER_WORK/assets" \
     "$BROWSER_WORK/archived_files"
 
+chown -R "$BROWSER_USER:$BROWSER_USER" "$BROWSER_HOME" "$BROWSER_WORK"
+chmod -R a+rX "$BROWSER_WORK" 2>/dev/null || true
 
-chown -R \
-    "$BROWSER_USER:$BROWSER_USER" \
-    "$BROWSER_HOME"
-
-
-chmod -R a+rX \
-    "$BROWSER_WORK" \
-    2>/dev/null || true
-
-
-# ============================================================
+# ---------------------------------------------------------------------------
 # .env.panel
-# ============================================================
-
-log "configuring $ENV_FILE"
-
-mkdir -p "$ROOT"
-
-touch "$ENV_FILE"
-
-
+# ---------------------------------------------------------------------------
 set_kv() {
+    key="$1"
+    value="$2"
+    mkdir -p "$(dirname "$ENV_FILE")"
+    touch "$ENV_FILE"
 
-    KEY="$1"
-    VALUE="$2"
-
-    TMP_FILE="${ENV_FILE}.tmp.$$"
-
-    awk \
-        -v key="$KEY" \
-        -v value="$VALUE" '
-
-        BEGIN {
-            found=0
-        }
-
-        $0 ~ ("^" key "=") {
-
-            if (!found) {
-                print key "=" value
-                found=1
-            }
-
-            next
-        }
-
-        {
-            print
-        }
-
-        END {
-
-            if (!found) {
-                print key "=" value
-            }
-
-        }
-
-    ' "$ENV_FILE" > "$TMP_FILE"
-
-    mv "$TMP_FILE" "$ENV_FILE"
-
+    if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+    else
+        printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+    fi
 }
 
+set_kv_if_missing() {
+    key="$1"
+    value="$2"
+    mkdir -p "$(dirname "$ENV_FILE")"
+    touch "$ENV_FILE"
 
-# ------------------------------------------------------------
-# Core panel settings
-# ------------------------------------------------------------
+    if ! grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+        printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+    fi
+}
 
-set_kv "PORT" "${PORT:-3210}"
+log "Writing $ENV_FILE"
 
-set_kv "HOST" "${HOST:-0.0.0.0}"
+set_kv_if_missing PORT "3210"
+set_kv_if_missing HOST "0.0.0.0"
+set_kv BROWSER_DISPLAY "$DISPLAY_NUM"
+set_kv BROWSER_CHROME_PATH "$CHROME_PATH"
+set_kv PLAYWRIGHT_CHROME_PATH "$CHROME_PATH"
+set_kv BROWSER_USER "$BROWSER_USER"
+set_kv BROWSER_HOME "$BROWSER_HOME"
+set_kv BROWSER_WORK_DIR "$BROWSER_WORK"
+set_kv BROWSER_XAUTHORITY "$BROWSER_HOME/.Xauthority"
+set_kv BROWSER_USER_DATA_DIR "$BROWSER_WORK/persistent"
 
-set_kv "BROWSER_DISPLAY" "$DISPLAY_NUM"
+# Do not let Playwright download another browser.
+set_kv PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD "1"
+set_kv PLAYWRIGHT_BROWSERS_PATH "0"
 
+# Useful for Chromium/automation environments.
+set_kv_if_missing CHROMEDRIVER_PATH "$CHROMEDRIVER_PATH"
 
-# ------------------------------------------------------------
-# Chromium
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Python / pip
+# ---------------------------------------------------------------------------
+have python3 || die "python3 installation failed"
+python3 -m pip --version >/dev/null 2>&1 || die "pip installation failed"
 
-# IMPORTANT:
-#
-# Use Alpine's launcher:
-#
-#   /usr/bin/chromium
-#
-# NOT:
-#
-#   /usr/lib/chromium/chromium
-#
-# The launcher prepares Alpine's Chromium environment correctly.
+log "Python $(python3 --version 2>&1)"
+log "pip $(python3 -m pip --version)"
 
-set_kv \
-    "BROWSER_CHROME_PATH" \
-    "$CHROMIUM_LAUNCHER"
-
-
-set_kv \
-    "PLAYWRIGHT_CHROME_PATH" \
-    "$CHROMIUM_LAUNCHER"
-
-
-# ------------------------------------------------------------
-# ChromeDriver
-# ------------------------------------------------------------
-
-set_kv \
-    "CHROMEDRIVER_PATH" \
-    "$CHROMEDRIVER"
-
-
-set_kv \
-    "WEBDRIVER_CHROME_DRIVER" \
-    "$CHROMEDRIVER"
-
-
-# ------------------------------------------------------------
-# Browser user
-# ------------------------------------------------------------
-
-set_kv \
-    "BROWSER_USER" \
-    "$BROWSER_USER"
-
-
-set_kv \
-    "BROWSER_HOME" \
-    "$BROWSER_HOME"
-
-
-set_kv \
-    "BROWSER_WORK_DIR" \
-    "$BROWSER_WORK"
-
-
-set_kv \
-    "BROWSER_XAUTHORITY" \
-    "$BROWSER_HOME/.Xauthority"
-
-
-set_kv \
-    "BROWSER_USER_DATA_DIR" \
-    "$BROWSER_WORK/persistent"
-
-
-# ------------------------------------------------------------
-# Playwright
-# ------------------------------------------------------------
-
-set_kv \
-    "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD" \
-    "1"
-
-
-set_kv \
-    "PLAYWRIGHT_BROWSERS_PATH" \
-    "0"
-
-
-chown root:root "$ENV_FILE"
-
-chmod 0644 "$ENV_FILE"
-
-
-log ".env.panel:"
-echo "----------------------------------------"
-cat "$ENV_FILE"
-echo "----------------------------------------"
-
-
-# ============================================================
-# Python packages
-# ============================================================
-
-log "installing Python packages"
-
-PIP_ARGS="
+PIP_INSTALL="
+python3 -m pip install
 --break-system-packages
 --ignore-installed
 --disable-pip-version-check
 --no-cache-dir
 "
 
+# Alpine uses musl, so wheels are preferred. If a package has to compile,
+# build-base/python3-dev/linux-headers are already installed above.
+log "Installing Python build helpers"
+# shellcheck disable=SC2086
+$PIP_INSTALL -U setuptools wheel
 
-python3 -m pip install \
-    $PIP_ARGS \
-    -U \
-    setuptools \
-    wheel
-
-
-# ------------------------------------------------------------
-# Optional panel requirements
-# ------------------------------------------------------------
-
-REQUIREMENTS=""
-
+# Include panel requirement files if they already exist.
+REQUIREMENT_ARGS=""
 for requirement_file in \
     "$ROOT/requirements-dp.txt" \
     "$ROOT/requirements-sb.txt" \
     "$ROOT/requirements-playwright.txt"
 do
-
     if [ -f "$requirement_file" ]; then
-
-        REQUIREMENTS="$REQUIREMENTS -r $requirement_file"
-
+        REQUIREMENT_ARGS="$REQUIREMENT_ARGS -r $requirement_file"
     fi
-
 done
 
-
-# ------------------------------------------------------------
-# Main Python stack
-# ------------------------------------------------------------
-
-log "installing browser automation Python stack"
-
+log "Installing Python browser/task stack"
 
 # shellcheck disable=SC2086
-python3 -m pip install \
-    $PIP_ARGS \
-    -U \
-    $REQUIREMENTS \
+$PIP_INSTALL -U \
+    $REQUIREMENT_ARGS \
     "requests>=2.31.0" \
     "urllib3>=2.0.0" \
     "Pillow>=10.0.0" \
@@ -612,14 +283,12 @@ python3 -m pip install \
     "pydub>=0.25.0" \
     "numpy>=1.24.0"
 
+# ---------------------------------------------------------------------------
+# Python import verification
+# ---------------------------------------------------------------------------
+log "Verifying Python runtime"
 
-# ============================================================
-# Python verification
-# ============================================================
-
-log "verifying Python imports"
-
-python3 <<'PY'
+python3 - <<'PY'
 import importlib
 import sys
 
@@ -640,72 +309,215 @@ modules = [
 failed = []
 
 for name in modules:
-
     try:
         importlib.import_module(name)
-
     except Exception as exc:
-        failed.append(
-            f"{name}: {exc}"
-        )
-
+        failed.append(f"{name}: {exc}")
 
 if failed:
-
-    print(
-        "Python runtime verification failed:",
-        file=sys.stderr
-    )
-
+    print("Python runtime verification failed:", file=sys.stderr)
     for item in failed:
-        print(
-            "  - " + item,
-            file=sys.stderr
-        )
-
+        print("  - " + item, file=sys.stderr)
     raise SystemExit(1)
 
-
 print("Python runtime imports: OK")
-
 PY
 
-
-# ============================================================
-# Playwright configuration
-# ============================================================
-
+# ---------------------------------------------------------------------------
+# Playwright: do NOT download its browser.
+# The application must use:
+#   executable_path=/usr/bin/chromium-browser
+# or the BROWSER_CHROME_PATH / PLAYWRIGHT_CHROME_PATH value above.
+# ---------------------------------------------------------------------------
 export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-
 export PLAYWRIGHT_BROWSERS_PATH=0
 
+# Verify Playwright Python package without downloading a browser.
+python3 - <<'PY'
+from playwright.sync_api import sync_playwright
 
-log "Playwright browser download disabled"
+with sync_playwright() as p:
+    print("Playwright Python package: OK")
+PY
 
-log "System Chromium will be used."
+# ---------------------------------------------------------------------------
+# Selenium: Alpine's chromium-chromedriver is the matching system driver.
+# Do NOT use SeleniumBase's downloader here because it can fetch a second
+# driver/browser from the internet and break the "single system Chromium"
+# design.
+# ---------------------------------------------------------------------------
+log "Using system chromedriver: $CHROMEDRIVER_PATH"
 
+# ---------------------------------------------------------------------------
+# Xvfb
+# ---------------------------------------------------------------------------
+XAUTH_FILE="$BROWSER_HOME/.Xauthority"
 
+start_xvfb() {
+    if pgrep -f "[X]vfb $DISPLAY_NUM" >/dev/null 2>&1; then
+        log "Xvfb $DISPLAY_NUM is already running"
+        return 0
+    fi
 
-echo ""
-echo "========================================"
-echo "INSTALLATION COMPLETE"
-echo "========================================"
+    rm -f "$XAUTH_FILE" 2>/dev/null || true
+    touch "$XAUTH_FILE"
+    chown "$BROWSER_USER:$BROWSER_USER" "$XAUTH_FILE"
 
+    log "Starting Xvfb $DISPLAY_NUM"
 
-log "Browser:"
-log "  $CHROMIUM_LAUNCHER"
+    # -ac means X access control is disabled. This mirrors the original
+    # installer and is suitable for a dedicated browser automation host.
+    Xvfb "$DISPLAY_NUM" \
+        -screen 0 1440x900x24 \
+        -ac \
+        +extension GLX \
+        +render \
+        -noreset \
+        >/var/log/xvfb-browser.log 2>&1 &
 
-log "ChromeDriver:"
-log "  $CHROMEDRIVER"
+    XVFB_PID=$!
 
-log "Environment:"
-log "  $ENV_FILE"
+    sleep 1
 
-log ""
-log "Important:"
-log "  - Use /usr/bin/chromium for browser-panel."
-log "  - Do NOT run: playwright install"
-log "  - Xvfb must be started manually in proot mode"
-log "  - Use DISPLAY=:1 before starting browser-panel"
-log "  - ChromeDriver comes from Alpine chromium-chromedriver."
-log "  - Playwright uses system Chromium."
+    if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+        cat /var/log/xvfb-browser.log >&2 || true
+        die "Xvfb failed to start"
+    fi
+
+    log "Xvfb started: PID=$XVFB_PID DISPLAY=$DISPLAY_NUM"
+}
+
+# ---------------------------------------------------------------------------
+# OpenRC service, when OpenRC is available.
+# ---------------------------------------------------------------------------
+install_openrc_service() {
+    if ! have rc-service || ! have rc-update; then
+        return 0
+    fi
+
+    mkdir -p /etc/init.d
+
+    cat >/etc/init.d/xvfb-browser <<'EOF'
+#!/sbin/openrc-run
+
+name="xvfb-browser"
+description="Permanent Xvfb display for browser automation"
+
+command="/usr/bin/Xvfb"
+command_args=":1 -screen 0 1440x900x24 -ac +extension GLX +render -noreset"
+command_background="yes"
+pidfile="/run/xvfb-browser.pid"
+
+depend() {
+    need localmount
+    after bootmisc
+}
+EOF
+
+    chmod +x /etc/init.d/xvfb-browser
+
+    rc-update add xvfb-browser default >/dev/null 2>&1 || true
+
+    if rc-service xvfb-browser status >/dev/null 2>&1; then
+        rc-service xvfb-browser restart >/dev/null 2>&1 || true
+    else
+        rc-service xvfb-browser start >/dev/null 2>&1 || true
+    fi
+
+    sleep 1
+
+    if pgrep -f "[X]vfb :1" >/dev/null 2>&1; then
+        log "OpenRC Xvfb service is active"
+    else
+        log "WARN: OpenRC service was installed but Xvfb is not running"
+    fi
+}
+
+# Prefer OpenRC on an Alpine VPS. In a container/minimal environment,
+# there may be no init system, so start Xvfb directly.
+if have rc-service && [ -d /run/openrc ] || [ -f /sbin/openrc ]; then
+    install_openrc_service
+else
+    start_xvfb
+fi
+
+# Make X environment available to browser tasks launched by this shell.
+export DISPLAY="$DISPLAY_NUM"
+export XAUTHORITY="$XAUTH_FILE"
+
+# ---------------------------------------------------------------------------
+# Final Chromium smoke test
+# ---------------------------------------------------------------------------
+log "Running Chromium smoke test"
+
+TMP_PROFILE="$(mktemp -d /tmp/chromium-test.XXXXXX)"
+trap 'rm -rf "$TMP_PROFILE" 2>/dev/null || true' EXIT
+
+if "$CHROME_PATH" \
+    --headless=new \
+    --no-sandbox \
+    --disable-dev-shm-usage \
+    --disable-gpu \
+    --user-data-dir="$TMP_PROFILE" \
+    --dump-dom \
+    about:blank >/dev/null 2>&1
+then
+    log "Chromium headless smoke test: OK"
+else
+    log "WARN: headless Chromium test failed; testing Xvfb mode"
+
+    if DISPLAY="$DISPLAY_NUM" "$CHROME_PATH" \
+        --no-sandbox \
+        --disable-dev-shm-usage \
+        --disable-gpu \
+        --user-data-dir="$TMP_PROFILE" \
+        --dump-dom \
+        about:blank >/dev/null 2>&1
+    then
+        log "Chromium Xvfb smoke test: OK"
+    else
+        die "Chromium could not start. Check /var/log/xvfb-browser.log and run: $CHROME_PATH --version"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+echo
+log "========================================"
+log " Alpine browser stack installation done"
+log "========================================"
+echo "Alpine:          $ALPINE_VERSION"
+echo "Architecture:    $ARCH"
+echo "Chromium:        $CHROME_PATH"
+echo "Chromedriver:    $CHROMEDRIVER_PATH"
+echo "Node:             $(node -v)"
+echo "npm:              $(npm -v)"
+echo "Python:           $(python3 --version 2>&1)"
+echo "Display:          $DISPLAY_NUM"
+echo "Browser user:     $BROWSER_USER"
+echo "Work dir:         $BROWSER_WORK"
+echo "Env file:         $ENV_FILE"
+echo
+
+if pgrep -f "[X]vfb" >/dev/null 2>&1; then
+    echo "Xvfb:             RUNNING"
+else
+    echo "Xvfb:             NOT RUNNING"
+fi
+
+echo
+echo "Browser path for panel:"
+echo "  $CHROME_PATH"
+echo
+echo "Playwright browser download:"
+echo "  DISABLED (system Chromium is used)"
+echo
+echo "Notes:"
+echo "  - Alpine/OpenRC is used instead of systemd."
+echo "  - chromium + chromium-chromedriver come from Alpine packages."
+echo "  - No Google Chrome .deb is used."
+echo "  - No Playwright browser is downloaded."
+echo "  - Python packages are installed system-wide."
+echo "  - Existing $ENV_FILE values are preserved where possible."
+echo
