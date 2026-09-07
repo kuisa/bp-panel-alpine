@@ -8,3 +8,7 @@ curl -o /root/panel.sh -Ls  https://raw.githubusercontent.com/kuisa/bp-panel-alp
 
 运行在后台:
 nohup bash /root/panel.sh > /dev/null 2>&1 &
+
+
+一键安装firefox和ruyipage:
+bash <(curl -Ls 'https://raw.githubusercontent.com/kuisa/bp-panel-alpine/main/ff.sh')
